@@ -19,10 +19,10 @@
   "scripts": {
     "develop": "gatsby develop",
     "start": "gatsby develop",
-    "build": "gatsby build",
-    "build:bnf": "cross-env GATSBY_SITE=bnf gatsby build",
+    "build": "node ./scripts/ensure-parcel-watcher.js && gatsby build",
+    "build:bnf": "node ./scripts/ensure-parcel-watcher.js && cross-env GATSBY_SITE=bnf gatsby build",
     "postbuild:bnf": "cpy \"./**/*.*\" \"../../functional-tests/bnf-website-build\" --cwd=public",
-    "build:bnfc": "cross-env GATSBY_SITE=bnfc gatsby build",
+    "build:bnfc": "node ./scripts/ensure-parcel-watcher.js && cross-env GATSBY_SITE=bnfc gatsby build",
     "postbuild:bnfc": "cpy \"./**/*.*\" \"../../functional-tests/bnfc-website-build\" --cwd=public",
     "serve": "gatsby serve",
     "clean": "gatsby clean",
@@ -93,6 +93,13 @@
     },
     "wait-on": {
       "axios": "1.14.0"
+    },
+    "react-server-dom-webpack": {
+      "react": "$react"
+    },
+    "eslint-config-react-app": {
+      "@typescript-eslint/eslint-plugin": "^5.60.1",
+      "@typescript-eslint/parser": "^5.60.1"
     }
   },
   "browserslist": [
