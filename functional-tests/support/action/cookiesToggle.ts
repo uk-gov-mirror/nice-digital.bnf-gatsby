@@ -1,45 +1,35 @@
-export async function cookiesToggle(type: "on" | "off"): Promise<void> {
-	const essentialCookie = await $(
-		"#ccc-optional-categories > div:nth-child(1) > div > label"
-	);
-	essentialCookie.isDisplayed;
-	essentialCookie.scrollIntoView();
+async function toggleCookieCategory(nthChild: number): Promise<void> {
+	// Wait for the cookie banner's options panel to actually be there before
+	// interacting: if a previous scenario left the CookieControl cookie behind
+	// the banner never opens, and without this guard the click hangs until the
+	// cucumber step timeout (60s) with no useful error.
+	const panel = await $("#ccc-optional-categories");
+	await panel.waitForDisplayed({
+		timeout: 15000,
+		timeoutMsg:
+			"Cookie banner options panel (#ccc-optional-categories) not shown - is the CookieControl cookie already set?",
+	});
 
-	if (type == "off") {
-		await essentialCookie.click();
-	}
-	//to switch off cookies selection
-	else await essentialCookie.click();
+	const label = await panel.$(`div:nth-child(${nthChild}) > div > label`);
+	await label.scrollIntoView();
+	await label.waitForClickable({ timeout: 15000 });
+	await label.click();
 }
+
+export async function cookiesToggle(type: "on" | "off"): Promise<void> {
+	await toggleCookieCategory(1);
+}
+
 export async function WebsiteUsagecookiesToggle(
 	type: "on" | "off"
 ): Promise<void> {
-	const websiteUsageCookie = await $(
-		"#ccc-optional-categories > div:nth-child(2) > div > label"
-	);
-	await websiteUsageCookie.isDisplayed();
-	await websiteUsageCookie.scrollIntoView();
-
-	if (type == "off") {
-		await websiteUsageCookie.click();
-	}
-	//to switch off cookies selection
-	else await websiteUsageCookie.click();
+	await toggleCookieCategory(2);
 }
+
 export async function marketingCookiesToggle(
 	type: "on" | "off"
 ): Promise<void> {
-	const marketingCookie = await $(
-		"#ccc-optional-categories > div:nth-child(3) > div > label"
-	);
-	await marketingCookie.isDisplayed();
-	await marketingCookie.scrollIntoView();
-
-	if (type == "off") {
-		await marketingCookie.click();
-	}
-	//to switch off cookies selection
-	else await marketingCookie.click();
+	await toggleCookieCategory(3);
 }
 
 export default cookiesToggle;

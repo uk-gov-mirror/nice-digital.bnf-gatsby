@@ -11,7 +11,7 @@ export const config: WebdriverIO.Config = {
 	// We need to use webdriver protocol in Docker because we use the selenium grid.
 	automationProtocol: isInDocker ? "webdriver" : "devtools",
 
-	maxInstances: isInDocker ? 2 : 1,
+	maxInstances: isInDocker ? 5 : 1,
 	path: "/wd/hub",
 	port: 4444,
 
@@ -72,6 +72,18 @@ export const config: WebdriverIO.Config = {
 				isTeamCity ? " (TeamCity)" : ""
 			} → CPUs: ${cpuCount} | Memory: ${totalMemGB.toFixed(1)} GB`
 		);
+	},
+
+	// Start every scenario with a clean cookie state. Cleaning up at the END of
+	// a scenario (as the cookie/EULA feature used to) silently skips when a
+	// scenario fails, leaving cookies behind that stop the banner appearing for
+	// the next scenario - the source of 60s step timeouts.
+	beforeScenario: async function () {
+		try {
+			await browser.deleteCookies();
+		} catch {
+			// No page loaded yet in this session - nothing to delete
+		}
 	},
 
 	afterStep: async function (_test, _scenario, { error }) {

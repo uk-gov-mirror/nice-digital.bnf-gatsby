@@ -21,7 +21,7 @@ function runTests() {
   # reuse a stale image; it's a near-instant no-op when layers are already fresh.
   # On TeamCity this also (re)creates the containers prepared by the background
   # `docker-compose up --no-start`, so a plain `start` is no longer needed.
-  docker-compose up -d --build --scale bnf-selenium-chrome=2
+  docker-compose up -d --build --scale bnf-selenium-chrome=5
 
   # Wait for the web app to be up before running the tests
   docker-compose run -T bnf-test-runner npm run wait-then-test
