@@ -14,6 +14,12 @@ export COMPOSE_CONVERT_WINDOWS_PATHS=1
 function cleanupBeforeStart() {
   # Clean up before we start
   rm -rf docker-output && rm -rf allure-results && rm -rf allure-report
+
+  # Tear down anything left over from a previous run (e.g. a canceled build
+  # that never reached cleanup): compose reuses an "up-to-date" container even
+  # when its bind-mounted content has been replaced, so a stale bnf-website
+  # can end up serving a deleted directory and the wait-on gate times out.
+  docker-compose down --remove-orphans 2>/dev/null || true
 }
 
 function runTests() {
