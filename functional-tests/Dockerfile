@@ -4,7 +4,7 @@ ENV IN_DOCKER=true
 
 # Node >= 22.12 enables require(esm). whch breaks cucumber 9 loading wdio's
 # top-level-await formatter. Disable it.
-ENV NODE_OPTION="--no-experimental-require-module"
+ENV NODE_OPTIONS="--no-experimental-require-module"
 
 # Install Java (for Allure) see https://stackoverflow.com/a/44154721/486434
 RUN apk add openjdk8
