@@ -2,7 +2,7 @@ FROM node:24.18.1-alpine
 
 ENV IN_DOCKER=true
 
-# Node >= 22.12 enables require(esm). whch breaks cucumber 9 loading wdio's
+# Node >= 22.12 enables require(esm), which breaks cucumber 9 loading wdio's
 # top-level-await formatter. Disable it.
 ENV NODE_OPTIONS="--no-experimental-require-module"
 
