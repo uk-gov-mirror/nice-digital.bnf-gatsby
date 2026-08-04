@@ -1,3 +1,10 @@
+// Self-hosted fonts (same weights/styles the old Google Fonts link served)
+import "@fontsource/inter/400.css";
+import "@fontsource/inter/600.css";
+import "@fontsource/lora/400-italic.css";
+import "@fontsource/lora/400.css";
+import "@fontsource/lora/600-italic.css";
+import "@fontsource/lora/600.css";
 import React, { ReactNode } from "react";
 
 import { Footer, Main } from "@nice-digital/global-nav";
@@ -9,13 +16,6 @@ import { SiteDistinction } from "../SiteDistinction/SiteDistinction";
 import { SiteHeader } from "../SiteHeader/SiteHeader";
 
 import { isBNF } from "./../../site";
-// Self-hosted fonts (same weights/styles the old Google Fonts link served)
-import "@fontsource/inter/400.css";
-import "@fontsource/inter/600.css";
-import "@fontsource/lora/400.css";
-import "@fontsource/lora/400-italic.css";
-import "@fontsource/lora/600.css";
-import "@fontsource/lora/600-italic.css";
 import "./../../styles/feed.scss";
 import "./../../styles/global.scss";
 
