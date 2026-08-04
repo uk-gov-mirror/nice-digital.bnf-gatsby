@@ -21,16 +21,9 @@ export const onPreRenderHTML = ({
 		></script>
 	);
 
-	// Add Google Fonts
-	components.push(
-		<>
-			<link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="" />
-			<link
-				href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&family=Lora:ital,wght@0,400;0,600;1,400;1,600&display=swap"
-				rel="stylesheet"
-			/>
-		</>
-	);
+	// Fonts are self-hosted via @fontsource imports in the Layout component, so
+	// no external stylesheet is needed here (a synchronous fonts.googleapis.com
+	// link blocks DOMContentLoaded when the fetch is slow).
 
 	replaceHeadComponents(components);
 };
