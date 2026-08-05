@@ -174,10 +174,6 @@ export const config: WebdriverIO.Config = {
 		tags: "not @pending", // See https://docs.cucumber.io/tag-expressions/
 		// Need quite a long timeout here because some of the Axe a11y tests take a while for longer pages (like drugs A to Z)
 		timeout: 60000,
-		// Retry a failed scenario once on CI: one-off browser/page-load stalls
-		// (single scenario out of ~1700 tests) shouldn't fail a 30-minute build.
-		// Genuine failures still fail - they reproduce on the retry.
-		retry: isInDocker ? 1 : 0,
 	},
 
 	onPrepare: function () {
