@@ -5,6 +5,76 @@ const isInDocker = !!process.env.IN_DOCKER,
 	cpuCount = os.cpus().length,
 	totalMemGB = os.totalmem() / 1024 ** 3;
 
+// "goog:loggingPrefs" is a chromedriver vendor capability that @wdio/types
+// doesn't declare, so add it to the capability type rather than dropping it
+type ChromeCapabilities = WebdriverIO.Capabilities & {
+	"goog:loggingPrefs"?: { browser?: string };
+};
+
+// Diagnostics for the roaming 60s step timeouts: dump what the browser was
+// doing when a step failed. A client side Gatsby transition leaves the
+// original page's navigation entry in place, so an entry whose URL matches the
+// CURRENT location means the browser did a full page load where a history API
+// transition was expected - i.e. Gatsby's hard reload fallback after a failed
+// page-data/chunk fetch. A failed fetch also shows up as a SEVERE browser console entry.
+async function logStallDiagnostics(errorStack: string): Promise<void> {
+	const log = (message: string): void =>
+		console.log(`[stall-diagnostics] ${message}`);
+
+	const collect = async (): Promise<void> => {
+		const state = await browser.execute(() => ({
+			url: window.location.href,
+			title: document.title,
+			readyState: document.readyState,
+			navigations: performance.getEntriesByType("navigation").map((entry) => ({
+				type: (entry as PerformanceNavigationTiming).type,
+				url: entry.name,
+				duration: Math.round(entry.duration),
+			})),
+		}));
+
+		log(`url=${state.url}`);
+		log(`title=${state.title} readyState=${state.readyState}`);
+		log(`navigations=${JSON.stringify(state.navigations)}`);
+
+		// getLogs is a chromedriver/selenium endpoint so it's only available over
+		// the webdriver protocol, i.e. the grid in Docker and not devtools locally.
+		// The log buffer resets on read, so this holds everything logged since the
+		// previous failed step.
+		if (isInDocker && typeof browser.getLogs === "function") {
+			const entries = (await browser.getLogs("browser")) as {
+				level?: string;
+				message?: string;
+			}[];
+
+			log(`browser console: ${entries.length} entries`);
+			entries.forEach((entry) => log(`  ${entry.level}: ${entry.message}`));
+		}
+	};
+
+	log(`step failed: ${errorStack.split("\n")[0]}`);
+
+	let timer: NodeJS.Timeout | undefined;
+
+	try {
+		await Promise.race([
+			collect(),
+			// Never let a wedged session hang the run. Hitting this is itself a
+			// result: it means the browser is still blocked after the step timeout.
+			new Promise<never>((_resolve, reject) => {
+				timer = setTimeout(
+					() => reject(new Error("gave up after 15s, session still blocked")),
+					15000
+				);
+			}),
+		]);
+	} catch (diagnosticError) {
+		log(`could not collect: ${(diagnosticError as Error).message}`);
+	} finally {
+		clearTimeout(timer);
+	}
+}
+
 export const config: WebdriverIO.Config = {
 	// Use devtools to control Chrome when we're running tests locally
 	// Avoids issues with having the wrong ChromeDriver installed via selenium-standalone when Chrome updates every 6 weeks.
@@ -27,6 +97,9 @@ export const config: WebdriverIO.Config = {
 			// waits for React explicitly, so a slow third-party resource can't
 			// stall `browser.url()` past the cucumber step timeout.
 			pageLoadStrategy: "eager",
+			// Buffer browser console entries so logStallDiagnostics can dump them
+			// when a step fails. Failed resource fetches log at SEVERE.
+			"goog:loggingPrefs": { browser: "ALL" },
 			"goog:chromeOptions": {
 				args: [
 					"--window-size=1920,1080",
@@ -40,7 +113,7 @@ export const config: WebdriverIO.Config = {
 				].concat(isInDocker ? "--headless" : []),
 			},
 		},
-	],
+	] as ChromeCapabilities[],
 
 	// bail: 1,
 	logLevel: "error",
@@ -97,7 +170,10 @@ export const config: WebdriverIO.Config = {
 
 	afterStep: async function (_test, _scenario, { error }) {
 		// Take screenshots on error, these end up in the Allure reports
-		if (error) await browser.takeScreenshot();
+		if (error) {
+			await browser.takeScreenshot();
+			await logStallDiagnostics(error);
+		}
 	},
 
 	afterScenario: async function (_world, _result, _context) {
