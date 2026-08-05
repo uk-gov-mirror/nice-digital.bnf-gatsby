@@ -5,6 +5,10 @@ const isInDocker = !!process.env.IN_DOCKER,
 	cpuCount = os.cpus().length,
 	totalMemGB = os.totalmem() / 1024 ** 3;
 
+// Scenarios tagged with this get their cookies wiped first, so the cookie and
+// EULA banners re-render for them. See beforeScenario.
+const CONSENT_BANNER_TAG = "@consent-banners";
+
 // "goog:loggingPrefs" is a chromedriver vendor capability that @wdio/types
 // doesn't declare, so add it to the capability type rather than dropping it
 type ChromeCapabilities = WebdriverIO.Capabilities & {
@@ -184,11 +188,21 @@ export const config: WebdriverIO.Config = {
 		);
 	},
 
-	// Start every scenario with a clean cookie state. Cleaning up at the END of
-	// a scenario (as the cookie/EULA feature used to) silently skips when a
-	// scenario fails, leaving cookies behind that stop the banner appearing for
-	// the next scenario - the source of 60s step timeouts.
-	beforeScenario: async function () {
+	// Only the scenarios that test the consent banners start from a clean cookie
+	// state; everything else inherits the consent given by the first scenario in
+	// the session. Wiping cookies for all of them re-rendered the banner on every
+	// one of ~200 page opens, and each render is a chance for Civic's licence
+	// check to block the browser's JS thread - which stalls whatever command wdio
+	// runs next until the cucumber step timeout. Doing this before the scenario
+	// rather than after (as the feature used to) means a failed scenario can't
+	// skip the cleanup and leave the next one without a banner.
+	beforeScenario: async function (world) {
+		const needsBanners = world.pickle.tags.some(
+			(tag) => tag.name === CONSENT_BANNER_TAG
+		);
+
+		if (!needsBanners) return;
+
 		try {
 			await browser.deleteCookies();
 		} catch {

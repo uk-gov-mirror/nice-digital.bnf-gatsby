@@ -1,3 +1,4 @@
+@consent-banners
 Feature: Cookies and EULA banner
   As a user of BNF
   I can toggle cookies preference option on and off
