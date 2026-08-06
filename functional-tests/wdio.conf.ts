@@ -12,8 +12,16 @@ const CONSENT_BANNER_TAG = "@consent-banners";
 // "goog:loggingPrefs" is a chromedriver vendor capability that @wdio/types
 // doesn't declare, so add it to the capability type rather than dropping it
 type ChromeCapabilities = WebdriverIO.Capabilities & {
-	"goog:loggingPrefs"?: { browser?: string };
+	"goog:loggingPrefs"?: { browser?: string; performance?: string };
 };
+
+// The in-page stall probe costs one extra webdriver round trip per step (~30ms,
+// so roughly a minute across a full run). Only CI pays it, and STALL_PROBE=0
+// turns it off in one place once the stalls are understood.
+const stallProbeEnabled = isInDocker && process.env.STALL_PROBE !== "0",
+	// Fast enough to time a block to within a quarter second, slow enough that
+	// the timer itself is nothing next to the work the page is doing
+	heartbeatIntervalMs = 250;
 
 // Which webdriver commands are in flight, so a failed step can report what it
 // was actually blocked on. The step's own waitUntil timeouts can't rescue it: they
@@ -39,14 +47,247 @@ function snapshotCommands(): string {
 	}`;
 }
 
+// What the probe recorded inside the page, summarised in the browser so we only
+// pull back a few numbers rather than the whole buffer
+type StallProbeSummary = {
+	installed: boolean;
+	ageMs: number;
+	beats: number;
+	longestGapMs: number;
+	gapEndedMsAgo: number;
+	longTasks: string[];
+	mainAnchors: number;
+	domNodes: number;
+	jsHeapMB: number | null;
+};
+
+type ProbeState = {
+	installedAt: number;
+	beats: number[];
+	longTasks: { at: number; ms: number; attribution: string }[];
+};
+
+type ProbeWindow = Window & typeof globalThis & { __stallProbe?: ProbeState };
+
+// Runs IN THE BROWSER, so it has to be self contained: no closure variables, no
+// imports, and everything it needs passed as an argument.
+//
+// The point is to record what happens DURING a stall. Everything the old
+// diagnostics collect runs in afterStep, by which time the browser has recovered
+// and reports a perfectly healthy page - which is exactly what happened in 1666.
+// A heartbeat can't lie about that: if the main thread was blocked the interval
+// couldn't fire, so a gap in the timestamps is direct proof of a block, and its
+// length and end time bound when it happened.
+function installStallProbe(intervalMs: number): void {
+	const probeWindow = window as ProbeWindow;
+
+	// Steps share a page, so only the first step after a navigation installs it
+	if (probeWindow.__stallProbe) return;
+
+	const state: ProbeState = {
+		installedAt: Date.now(),
+		beats: [],
+		longTasks: [],
+	};
+
+	probeWindow.__stallProbe = state;
+
+	setInterval(() => {
+		state.beats.push(Date.now());
+		// A minute's worth at 250ms. Older beats can't be part of a live stall
+		if (state.beats.length > 240) state.beats.shift();
+	}, intervalMs);
+
+	// Names the script when the thread is blocked by JS rather than by a hung
+	// request. Wrapped because "longtask" isn't observable in every browser.
+	try {
+		new PerformanceObserver((list) => {
+			list.getEntries().forEach((entry) => {
+				if (entry.duration < 1000) return;
+
+				const { attribution } = entry as PerformanceEntry & {
+						attribution?: {
+							name?: string;
+							containerSrc?: string;
+							containerName?: string;
+						}[];
+					},
+					[source] = attribution || [];
+
+				state.longTasks.push({
+					at: Date.now(),
+					ms: Math.round(entry.duration),
+					attribution:
+						[source?.name, source?.containerName, source?.containerSrc]
+							.filter(Boolean)
+							.join(" ") || "unattributed",
+				});
+
+				if (state.longTasks.length > 10) state.longTasks.shift();
+			});
+		}).observe({ entryTypes: ["longtask"] });
+	} catch {
+		// No longtask support - the heartbeat still tells us about the block
+	}
+}
+
+// Also runs in the browser. Summarises rather than returning the raw buffers.
+function readStallProbe(): StallProbeSummary {
+	const state = (window as ProbeWindow).__stallProbe,
+		now = Date.now(),
+		// Cheap, and it separates "the thread was blocked" from "the link text
+		// XPath had to walk an enormous list page" as explanations for a slow
+		// findElements. Both stalls in 1666 were on big index pages.
+		dom = {
+			mainAnchors: document.querySelectorAll("main a").length,
+			domNodes: document.getElementsByTagName("*").length,
+		},
+		{ memory } = performance as Performance & {
+			memory?: { usedJSHeapSize: number };
+		},
+		jsHeapMB = memory ? Math.round(memory.usedJSHeapSize / 1024 / 1024) : null;
+
+	if (!state)
+		return {
+			installed: false,
+			ageMs: 0,
+			beats: 0,
+			longestGapMs: 0,
+			gapEndedMsAgo: 0,
+			longTasks: [],
+			jsHeapMB,
+			...dom,
+		};
+
+	let longestGapMs = 0,
+		gapEndedAt = 0;
+
+	state.beats.forEach((beat, index) => {
+		if (index === 0) return;
+
+		const gap = beat - state.beats[index - 1];
+
+		if (gap > longestGapMs) {
+			longestGapMs = gap;
+			gapEndedAt = beat;
+		}
+	});
+
+	return {
+		installed: true,
+		ageMs: now - state.installedAt,
+		beats: state.beats.length,
+		longestGapMs,
+		gapEndedMsAgo: gapEndedAt ? now - gapEndedAt : 0,
+		longTasks: state.longTasks.map(
+			(task) => `${task.ms}ms ${task.attribution} (${now - task.at}ms ago)`
+		),
+		jsHeapMB,
+		...dom,
+	};
+}
+
+type PerformanceLogEntry = { message?: string; timestamp?: number };
+
+type NetworkEvent = {
+	message?: {
+		method?: string;
+		params?: { requestId?: string; request?: { url?: string } };
+	};
+};
+
+// Chromedriver's performance log is a stream of raw CDP events. Requests that
+// were sent and never reached loadingFinished/loadingFailed are the ones still
+// hanging - and a hung request that blocks the page's JS thread is the confirmed
+// mechanism behind the Civic stalls, so this is the signal that named the cause
+// last time, only this time without having to hope it logged to the console.
+//
+// Note a page navigation cancels in-flight requests, and those cancellations
+// arrive as loadingFailed, so genuinely abandoned requests do drop out. Anything
+// still listed here was live when the step gave up.
+function summarisePendingRequests(entries: PerformanceLogEntry[]): string[] {
+	const started = new Map<string, { url: string; at: number }>(),
+		settled = new Set<string>();
+
+	entries.forEach((entry) => {
+		if (!entry.message) return;
+
+		let event: NetworkEvent;
+
+		try {
+			event = JSON.parse(entry.message) as NetworkEvent;
+		} catch {
+			return;
+		}
+
+		const method = event.message?.method,
+			params = event.message?.params,
+			requestId = params?.requestId;
+
+		if (!method || !requestId) return;
+
+		if (method === "Network.requestWillBeSent") {
+			const url = params?.request?.url;
+
+			if (url) started.set(requestId, { url, at: entry.timestamp || 0 });
+		} else if (
+			method === "Network.loadingFinished" ||
+			method === "Network.loadingFailed"
+		) {
+			settled.add(requestId);
+		}
+	});
+
+	const now = Date.now();
+
+	return [...started.entries()]
+		.filter(([requestId]) => !settled.has(requestId))
+		.map(([, request]) => ({
+			...request,
+			ageMs: request.at ? now - request.at : 0,
+		}))
+		.sort((a, b) => b.ageMs - a.ageMs)
+		.slice(0, 10)
+		.map((request) => `${request.ageMs}ms ${request.url}`);
+}
+
 // Dump what the browser was doing when a step failed.
 //
-// Read the browser console output first. The only confirmed cause of the
-// step timeouts so far was Civic's cookie banner: its licence check
-// to apikeys.civiccomputing.com blocked the page's JS main thread, so whatever
-// webdriver command wdio ran next sat there until the step timed out. Nothing
-// in the wdio log pointed at it - console dump identified it, which
-// is why "goog:loggingPrefs" is set on the capability.
+// Read the heartbeat first, then the pending requests, then the console.
+//
+// The only confirmed cause of the step timeouts so far was Civic's cookie
+// banner: its licence check to apikeys.civiccomputing.com blocked the page's JS
+// main thread, so whatever webdriver command wdio ran next sat there until the
+// step timed out. Nothing in the wdio log pointed at it - the console dump
+// identified it, which is why "goog:loggingPrefs" is set on the capability.
+//
+// That cause is fixed and gone (no Civic entries at all in build 1666), but the
+// stalls aren't. What changed is where they land: in 1666 both were on
+// `When I click the "X" link`, which runs 26 times a build, while the ~207 page
+// opens and everything else stalled zero times. Both hung on the step's FIRST
+// DOM command - the `$$` inside checkIfElementExists, reached via
+// support/action/scrollInToView.ts - with getTitle and getUrl on the lines above
+// completing in 31ms and 12ms. So the renderer was healthy and then wedged.
+// `$$` is a single protocol command with no wdio level timeout, so it eats the
+// whole 60s step budget, the same trap as `click`.
+//
+// Resourcing is not it: 1666's agent ran the identical specs 35-40% FASTER than
+// 1663's (55 passing in 26.7s vs 44.9s) and still finished the step quicker
+// despite absorbing two 60s stalls. A starved agent is uniformly slow; this one
+// was uniformly quick, and the two stalls were over two minutes apart. If
+// anything the faster agent produced MORE stalls, which points at a race.
+//
+// heartbeat  - the honest one. The probe's interval can't fire while the main
+//              thread is blocked, so a ~59s gap proves the block and dates it.
+//              Lots of small gaps instead would mean CPU contention after all.
+// pending    - a request that was sent and never settled. This is how a hung
+//              third party call announces itself now that we're not relying on
+//              it also happening to log to the console.
+// long tasks - names the script if the thread was blocked by JS rather than by
+//              a hung request.
+// anchors    - if a stall shows NO heartbeat gap but a huge anchor count, then
+//              the link text XPath really is just slow on that page and the
+//              whole blocked-thread theory is wrong for that occurrence.
 //
 // Navigation entries are the other thing to check. A client side Gatsby transition
 // leaves the original page's navigation entry in place, so an entry whose URL
@@ -77,11 +318,36 @@ async function logStallDiagnostics(
 		log(`title=${state.title} readyState=${state.readyState}`);
 		log(`navigations=${JSON.stringify(state.navigations)}`);
 
+		if (stallProbeEnabled) {
+			const probe = await browser.execute(readStallProbe);
+
+			if (!probe.installed) log("probe: not installed on this page");
+			else
+				log(
+					`probe: age=${probe.ageMs}ms beats=${probe.beats} longestGap=${probe.longestGapMs}ms (ended ${probe.gapEndedMsAgo}ms ago) heap=${probe.jsHeapMB}MB`
+				);
+
+			log(`dom: main anchors=${probe.mainAnchors} nodes=${probe.domNodes}`);
+
+			if (probe.longTasks.length)
+				probe.longTasks.forEach((task) => log(`  long task: ${task}`));
+			else log("long tasks: none over 1s");
+		}
+
 		// getLogs is a chromedriver/selenium endpoint so it's only available over
 		// the webdriver protocol, i.e. the grid in Docker and not devtools locally.
 		// The log buffer resets on read, so this holds everything logged since the
 		// previous failed step.
 		if (isInDocker && typeof browser.getLogs === "function") {
+			if (stallProbeEnabled) {
+				const pending = summarisePendingRequests(
+					(await browser.getLogs("performance")) as PerformanceLogEntry[]
+				);
+
+				log(`pending requests: ${pending.length || "none"}`);
+				pending.forEach((request) => log(`  ${request}`));
+			}
+
 			const entries = (await browser.getLogs("browser")) as {
 				level?: string;
 				message?: string;
@@ -140,8 +406,20 @@ export const config: WebdriverIO.Config = {
 			pageLoadStrategy: "eager",
 			// Buffer browser console entries so logStallDiagnostics can dump them
 			// when a step fails. Failed resource fetches log at SEVERE.
-			"goog:loggingPrefs": { browser: "ALL" },
+			// The performance log is the raw CDP event stream, which is how we spot
+			// a request that was sent and never came back - see
+			// summarisePendingRequests. Both buffers are only read on failure.
+			"goog:loggingPrefs": {
+				browser: "ALL",
+				...(stallProbeEnabled ? { performance: "ALL" } : {}),
+			},
 			"goog:chromeOptions": {
+				// Network events are the whole point; tracing would be gigabytes
+				perfLoggingPrefs: {
+					enableNetwork: true,
+					enablePage: true,
+					tracingCategories: "",
+				},
 				args: [
 					"--window-size=1920,1080",
 					// Automation optimizations as per https://github.com/GoogleChrome/chrome-launcher/blob/master/docs/chrome-flags-for-tools.md
@@ -212,6 +490,24 @@ export const config: WebdriverIO.Config = {
 			await browser.deleteCookies();
 		} catch {
 			// No page loaded yet in this session - nothing to delete
+		}
+	},
+
+	// Reinstall on every step because the probe lives in the page's JS context, so
+	// any navigation wipes it - and the step that stalls runs straight after a
+	// page open. It no-ops if it's already there, so the cost is the round trip.
+	//
+	// If the page is ALREADY wedged this install is what hangs, and the in flight
+	// snapshot will name `execute` rather than the command the step meant to run.
+	// The heartbeat gap still dates the block, so we lose the command name but not
+	// the finding.
+	beforeStep: async function () {
+		if (!stallProbeEnabled) return;
+
+		try {
+			await browser.execute(installStallProbe, heartbeatIntervalMs);
+		} catch {
+			// Diagnostics must never be the reason a step fails
 		}
 	},
 
