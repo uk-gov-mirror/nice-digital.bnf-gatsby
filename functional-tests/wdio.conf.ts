@@ -72,10 +72,10 @@ type ProbeWindow = Window & typeof globalThis & { __stallProbe?: ProbeState };
 // Runs IN THE BROWSER, so it has to be self contained: no closure variables, no
 // imports, and everything it needs passed as an argument.
 //
-// The point is to record what happens DURING a stall. Everything the old
+// Record what happens DURING a stall. Everything the old
 // diagnostics collect runs in afterStep, by which time the browser has recovered
-// and reports a perfectly healthy page - which is exactly what happened in 1666.
-// A heartbeat can't lie about that: if the main thread was blocked the interval
+// and reports a perfectly healthy page.
+// Heartbeat check - if the main thread was blocked the interval
 // couldn't fire, so a gap in the timestamps is direct proof of a block, and its
 // length and end time bound when it happened.
 function installStallProbe(intervalMs: number): void {
