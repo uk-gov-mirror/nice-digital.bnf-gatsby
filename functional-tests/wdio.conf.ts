@@ -414,12 +414,6 @@ export const config: WebdriverIO.Config = {
 				...(stallProbeEnabled ? { performance: "ALL" } : {}),
 			},
 			"goog:chromeOptions": {
-				// Network events are the whole point; tracing would be gigabytes
-				perfLoggingPrefs: {
-					enableNetwork: true,
-					enablePage: true,
-					tracingCategories: "",
-				},
 				args: [
 					"--window-size=1920,1080",
 					// Automation optimizations as per https://github.com/GoogleChrome/chrome-launcher/blob/master/docs/chrome-flags-for-tools.md
