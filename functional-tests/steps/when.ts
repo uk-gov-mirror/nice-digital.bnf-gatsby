@@ -19,24 +19,18 @@ import { waitForUrlToChange } from "../support/action/waitForUrlToChange.js";
 import { getPath } from "../support/pagePaths.js";
 import { getSelector } from "../support/selectors/index.js";
 
-// The NICE breadcrumb navigates to the live www.nice.org.uk, so allow longer
-// than the default step timeout to ride out slow external page loads.
-When(
-	/^I click the ([^"]*) breadcrumb$/,
-	{ timeout: 120000 },
-	async (breadcrumbText: string) => {
-		const pageTitle = await browser.getTitle(),
-			breadcrumbsListSelector = await getSelector("breadcrumbs list");
+When(/^I click the ([^"]*) breadcrumb$/, async (breadcrumbText: string) => {
+	const pageTitle = await browser.getTitle(),
+		breadcrumbsListSelector = await getSelector("breadcrumbs list");
 
-		await scrollInToView(breadcrumbsListSelector, "main");
+	await scrollInToView(breadcrumbsListSelector, "main");
 
-		const breadcrumbListElement = await $(breadcrumbsListSelector),
-			breadcrumbElement = await breadcrumbListElement.$(`=${breadcrumbText}`);
+	const breadcrumbListElement = await $(breadcrumbsListSelector),
+		breadcrumbElement = await breadcrumbListElement.$(`=${breadcrumbText}`);
 
-		await breadcrumbElement.click();
-		await waitForTitleToChange(pageTitle);
-	}
-);
+	await breadcrumbElement.click();
+	await waitForTitleToChange(pageTitle);
+});
 
 // Use this for link clicks as it waits for the link to scroll into view before clicking it.
 // This is beacuse we're using CSS smooth scrolling (scroll-behavior: smooth; in CSS), which

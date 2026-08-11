@@ -1,12 +1,9 @@
 import { Given } from "@wdio/cucumber-framework";
 
+import { acceptCookieBanner } from "@nice-digital/wdio-cucumber-steps/lib/support/action/acceptCookieBanner.js";
 import { openWebsite } from "@nice-digital/wdio-cucumber-steps/lib/support/action/openWebsite.js";
 import { setWindowSize } from "@nice-digital/wdio-cucumber-steps/lib/support/action/setWindowSize.js";
 
-// Deliberately the local copy, not the wdio-cucumber-steps one: wdio-cucumber-steps waits for
-// "body #ccc" to exist and throws after 2s, which turns a slow or failed
-// Civic cookie-banner load into a failed test rather than a no-op
-import { acceptCookieBanner } from "../support/action/acceptCookieBanner.js";
 import { acceptEULA } from "../support/action/acceptEULA.js";
 import { waitForReact } from "../support/action/waitForReact.js";
 import { getPath, PageName } from "../support/pagePaths.js";

@@ -3,6 +3,7 @@ import { Then } from "@wdio/cucumber-framework";
 import { checkContainsText } from "@nice-digital/wdio-cucumber-steps/lib/support/check/checkContainsText.js";
 import { checkEqualsText } from "@nice-digital/wdio-cucumber-steps/lib/support/check/checkEqualsText.js";
 
+import { acceptEULA } from "../support/action/acceptEULA.js";
 import { scrollInToView } from "../support/action/scrollInToView.js";
 import { getSelector, SelectorName } from "../support/selectors/index.js";
 
@@ -85,15 +86,7 @@ Then(
 		await checkContainsText("element", menuSelector, "", text);
 	}
 );
-// This step asserts the banner is there, so unlike the best effort dismissal in
-// the page open step it waits for it rather than skipping when it's absent
-Then(/^I accept EULA banner terms$/, async () => {
-	const EULAAcceptButton = await $("#btn-accept-bnf-eula");
-
-	await EULAAcceptButton.waitForDisplayed({ timeout: 15000 });
-	await EULAAcceptButton.scrollIntoView();
-	await EULAAcceptButton.click();
-});
+Then(/^I accept EULA banner terms$/, acceptEULA);
 Then(/^I close cookies banner$/, async () => {
 	const cookiesBannerClose = await $("#ccc-close");
 	await cookiesBannerClose.scrollIntoView();
