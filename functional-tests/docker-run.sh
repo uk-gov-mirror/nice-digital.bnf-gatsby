@@ -2,6 +2,11 @@
 
 # Runs functional tests via Docker
 
+# Prefer the fresh CodeArtifact token from TeamCity (NPM_TOKEN_CODEARTIFACT):
+# the root project also injects an env.NPM_TOKEN which is stale, so it must NOT
+# take precedence. Locally NPM_TOKEN_CODEARTIFACT is unset and NPM_TOKEN wins.
+export NPM_TOKEN="${NPM_TOKEN_CODEARTIFACT:-$NPM_TOKEN}"
+
 # Avoid "Mount denied" errors for Chrome/Firefox containers on Windows
 # See https://github.com/docker/for-win/issues/1829#issuecomment-376328022
 export COMPOSE_CONVERT_WINDOWS_PATHS=1
@@ -12,12 +17,21 @@ function cleanupBeforeStart() {
 }
 
 function runTests() {
-  if [[ -v TEAMCITY_VERSION ]]; then
-    # Assume that on TeamCity we've created the containers in the background with `docker-compose up --no-start` but not started them
-    docker-compose start
-  else
-    docker-compose up --scale bnf-selenium-chrome=2 -d
-  fi
+  # The real build already happened: a TeamCity step launches
+  # `pull && build --parallel --no-cache && up --no-start` in the background so it
+  # overlaps the gatsby builds. That step exports NPM_TOKEN itself, so the token is
+  # not the reason for --build here.
+  #
+  # --build is here because that background step is `nohup ... &` and its exit code
+  # is never checked. If it failed, or has not finished, plain `up` would start
+  # whatever containers a previous or cancelled build left behind - and nothing
+  # cleans docker state beforehand (cleanupBeforeStart only removes report dirs,
+  # and the trap is on ERR, so a cancelled build never reaches cleanup at all).
+  # Same reasoning as cks-gatsby a3c6934. Costs ~2s: every layer comes from cache.
+  #
+  # `docker-compose start` cannot do either job - it neither rebuilds nor scales,
+  # which is why the old TeamCity-only branch of this function had to go.
+  docker-compose up -d --build --scale bnf-selenium-chrome=2
 
   # Wait for the web app to be up before running the tests
   docker-compose run -T bnf-test-runner npm run wait-then-test

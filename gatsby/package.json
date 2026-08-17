@@ -28,7 +28,7 @@
     "clean": "gatsby clean",
     "// UTILS": "",
     "wait": "wait-on http-get://localhost:8000 --delay 10000 --interval 5000 --timeout 300000 --log",
-    "audit:teamcity": "npm audit --audit-level=moderate --json|npm-audit-reporter-teamcity"
+    "audit:teamcity": "npm audit --package-lock-only --audit-level=critical --registry=https://registry.npmjs.org"
   },
   "dependencies": {
     "@fontsource/inter": "^4.5.15",
@@ -93,7 +93,11 @@
     },
     "wait-on": {
       "axios": "1.14.0"
-    }
+    },
+    "react-server-dom-webpack": {
+      "react": "$react"
+    },
+    "shell-quote": "^1.10.0"
   },
   "browserslist": [
     "extends @nice-digital/browserslist-config"
